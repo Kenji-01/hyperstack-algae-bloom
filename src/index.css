@@ -1,0 +1,133 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* HyperStack AI Dark Theme Design System */
+
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 210 40% 6%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 210 40% 6%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 40% 6%;
+
+    --primary: 210 40% 6%;
+    --primary-foreground: 210 20% 98%;
+
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 210 40% 6%;
+
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 210 40% 96%;
+    --accent-foreground: 210 40% 6%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 20% 98%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 210 40% 6%;
+
+    --radius: 1rem;
+
+    /* HyperStack specific colors */
+    --hyperstack-bg: 220 26% 14%;
+    --hyperstack-card: 220 23% 18%;
+    --hyperstack-border: 220 20% 25%;
+    --hyperstack-teal: 174 72% 56%;
+    --hyperstack-teal-dark: 174 72% 46%;
+    --hyperstack-text: 210 20% 98%;
+    --hyperstack-text-muted: 215 16% 65%;
+    --hyperstack-success: 142 76% 36%;
+    --hyperstack-warning: 38 92% 50%;
+    --hyperstack-error: 0 84% 60%;
+  }
+
+  .dark {
+    --background: 220 26% 14%;
+    --foreground: 210 20% 98%;
+
+    --card: 220 23% 18%;
+    --card-foreground: 210 20% 98%;
+
+    --popover: 220 23% 18%;
+    --popover-foreground: 210 20% 98%;
+
+    --primary: 174 72% 56%;
+    --primary-foreground: 220 26% 14%;
+
+    --secondary: 220 20% 25%;
+    --secondary-foreground: 210 20% 98%;
+
+    --muted: 220 20% 25%;
+    --muted-foreground: 215 16% 65%;
+
+    --accent: 220 20% 25%;
+    --accent-foreground: 210 20% 98%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 20% 98%;
+
+    --border: 220 20% 25%;
+    --input: 220 20% 25%;
+    --ring: 174 72% 56%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground dark;
+  }
+
+  html {
+    @apply dark;
+  }
+}
+
+@layer components {
+  .hyperstack-card {
+    @apply bg-card border-border rounded-2xl border shadow-lg hover:shadow-xl transition-all duration-300;
+  }
+
+  .hyperstack-card-glow {
+    @apply hover:shadow-[0_0_20px_rgba(94,234,212,0.15)];
+  }
+
+  .hyperstack-metric-card {
+    @apply hyperstack-card p-4 space-y-2;
+  }
+
+  .hyperstack-button-primary {
+    @apply bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl px-6 py-2.5 font-medium transition-all duration-200;
+  }
+
+  .hyperstack-button-secondary {
+    @apply bg-secondary text-secondary-foreground hover:bg-secondary/80 border border-border rounded-xl px-6 py-2.5 font-medium transition-all duration-200;
+  }
+
+  .hyperstack-nav-link {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 hover:bg-accent hover:text-accent-foreground;
+  }
+
+  .hyperstack-nav-link-active {
+    @apply bg-primary text-primary-foreground;
+  }
+
+  .live-indicator {
+    @apply inline-flex items-center gap-2 px-3 py-1 bg-primary/10 border border-primary/20 rounded-full text-sm font-medium text-primary;
+  }
+
+  .live-dot {
+    @apply w-2 h-2 bg-primary rounded-full animate-pulse;
+  }
+}
