@@ -4,135 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { create } from 'zustand';
-import { devtools } from 'zustand/middleware';
-
-// Inline store definition
-interface CapturedFrame {
-  id: string;
-  timestamp: Date;
-  coverage: number;
-  imageData: string;
-}
-
-interface DeviceState {
-  lightOn: boolean;
-  pumpOn: boolean;
-  fanOn: boolean;
-  valveOpen: boolean;
-  duckweedCoverage: number;
-  temperature: number;
-  ph: number;
-  ec: number;
-  connectivity: 'connected' | 'poor' | 'disconnected';
-  systemHealth: 'good' | 'warning' | 'critical';
-  aiMode: 'off' | 'segmentation';
-  cameraEnabled: boolean;
-  valveClosed: boolean | null;
-  threshold: number;
-  phAdjustmentActive: boolean | null;
-  settings: {
-    greenThreshold: number;
-    showOverlay: boolean;
-    defaultPumpMode: boolean;
-    defaultLightMode: boolean;
-    defaultFanMode: boolean;
-    alarmVolume: number;
-    updateFrequency: number;
-    dataRetention: number;
-  };
-  thresholds: {
-    phMin: number;
-    phMax: number;
-    tempMin: number;
-    tempMax: number;
-    ecTarget: number;
-  };
-  capturedFrames: CapturedFrame[];
-}
-
-interface DeviceActions {
-  toggleLight: () => void;
-  togglePump: () => void;
-  toggleFan: () => void;
-  toggleValve: () => void;
-  updateMetric: (key: keyof DeviceState, value: any) => void;
-  setDuckweedCoverage: (pct: number) => void;
-  setValveClosed: (closed: boolean | null) => void;
-  setThreshold: (n: number) => void;
-  updateSetting: (key: keyof DeviceState['settings'], value: any) => void;
-  updateThreshold: (key: keyof DeviceState['thresholds'], value: number) => void;
-  addCapturedFrame: (frame: CapturedFrame) => void;
-  clearCapturedFrames: () => void;
-  resetToDefaults: () => void;
-}
-
-const initialState: DeviceState = {
-  lightOn: false,
-  pumpOn: false,
-  fanOn: false,
-  valveOpen: true,
-  duckweedCoverage: 0,
-  temperature: 24.5,
-  ph: 6.8,
-  ec: 850,
-  connectivity: 'connected',
-  systemHealth: 'good',
-  aiMode: 'off',
-  cameraEnabled: true,
-  valveClosed: null,
-  threshold: 40,
-  phAdjustmentActive: null,
-  settings: {
-    greenThreshold: 0.3,
-    showOverlay: true,
-    defaultPumpMode: false,
-    defaultLightMode: false,
-    defaultFanMode: false,
-    alarmVolume: 0.7,
-    updateFrequency: 5,
-    dataRetention: 30,
-  },
-  thresholds: {
-    phMin: 6.0,
-    phMax: 7.5,
-    tempMin: 20,
-    tempMax: 28,
-    ecTarget: 800,
-  },
-  capturedFrames: [],
-};
-
-const useDeviceStore = create<DeviceState & DeviceActions>()(
-  devtools(
-    (set, get) => ({
-      ...initialState,
-      toggleLight: () => set((state) => ({ lightOn: !state.lightOn })),
-      togglePump: () => set((state) => ({ pumpOn: !state.pumpOn })),
-      toggleFan: () => set((state) => ({ fanOn: !state.fanOn })),
-      toggleValve: () => set((state) => ({ valveOpen: !state.valveOpen })),
-      updateMetric: (key, value) => set((state) => ({ [key]: value })),
-      setDuckweedCoverage: (pct) => set({ duckweedCoverage: pct }),
-      setValveClosed: (closed) => set({ valveClosed: closed }),
-      setThreshold: (n) => set({ threshold: n }),
-      updateSetting: (key, value) => 
-        set((state) => ({ 
-          settings: { ...state.settings, [key]: value } 
-        })),
-      updateThreshold: (key, value) => 
-        set((state) => ({ 
-          thresholds: { ...state.thresholds, [key]: value } 
-        })),
-      addCapturedFrame: (frame) => 
-        set((state) => ({ 
-          capturedFrames: [...state.capturedFrames, frame].slice(-50)
-        })),
-      clearCapturedFrames: () => set({ capturedFrames: [] }),
-      resetToDefaults: () => set(initialState),
-    }),
-    { name: 'device-store' }
-  )
-);
+import { useDeviceStore } from '../store';
 
 // Inline segmentation utilities
 interface SegmentationResult {
@@ -200,7 +72,7 @@ function analyzeFrame(video: HTMLVideoElement, threshold: number = 0.3): number 
   return result.coverage;
 }
 
-// Inline analyzer hook
+// Improved analyzer hook that waits for video to be ready
 function useDuckweedAnalyzer(videoRef: React.RefObject<HTMLVideoElement>) {
   const [running, setRunning] = useState(false);
   const [coverage, setCoverage] = useState(0);
@@ -209,49 +81,79 @@ function useDuckweedAnalyzer(videoRef: React.RefObject<HTMLVideoElement>) {
   const [phAdjustmentActive, setPhAdjustmentActive] = useState<boolean | null>(null);
   
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const readyRef = useRef<boolean>(false);
+  
   const { setDuckweedCoverage, setValveClosed: setStoreValveClosed, threshold, setThreshold } = useDeviceStore();
+  const aiMode = useDeviceStore((s) => s.aiMode);
+
+  // Mark ready only after metadata loads
+  useEffect(() => {
+    if (!videoRef.current) return;
+    const onMeta = () => { readyRef.current = true; };
+    if (videoRef.current.readyState >= 2) readyRef.current = true;
+    videoRef.current.addEventListener("loadedmetadata", onMeta);
+    return () => videoRef.current?.removeEventListener("loadedmetadata", onMeta);
+  }, [videoRef.current]);
 
   const analyzeVideo = useCallback(async () => {
-    if (!videoRef.current || !running) return;
+    if (!videoRef.current || !running || aiMode === 'off') return;
 
     try {
+      // Wait for video to be ready
+      if (!readyRef.current) return;
+
+      // Guard zero dimensions
+      const vw = videoRef.current.videoWidth || 0;
+      const vh = videoRef.current.videoHeight || 0;
+      if (vw < 4 || vh < 4) return;
+
+      if (!canvasRef.current) canvasRef.current = document.createElement('canvas');
+      const canvas = canvasRef.current;
+      canvas.width = vw;
+      canvas.height = vh;
+
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return;
+      
+      ctx.drawImage(videoRef.current, 0, 0, vw, vh);
+
+      // Local coverage calculation
       const currentCoverage = analyzeFrame(videoRef.current, 0.3);
       setCoverage(currentCoverage);
       setDuckweedCoverage(currentCoverage);
 
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (ctx && videoRef.current) {
-        canvas.width = videoRef.current.videoWidth || 640;
-        canvas.height = videoRef.current.videoHeight || 480;
-        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+      // Robust toBlob for backend analysis
+      const blob: Blob = await new Promise((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/jpeg", 0.85);
+      });
+
+      const formData = new FormData();
+      formData.append('image', blob, 'frame.jpg');
+      
+      try {
+        const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'}/analyze`, {
+          method: 'POST',
+          body: formData
+        });
         
-        canvas.toBlob(async (blob) => {
-          if (!blob) return;
-          
-          const formData = new FormData();
-          formData.append('frame', blob, 'frame.jpg');
-          
-          try {
-            const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'}/analyze`, {
-              method: 'POST',
-              body: formData
-            });
-            
-            if (response.ok) {
-              const result = await response.json();
-              setCoverage(result.coverage_pct || currentCoverage);
-              setDuckweedCoverage(result.coverage_pct || currentCoverage);
-              setStoreValveClosed(result.valve_closed);
-              setValveClosed(result.valve_closed);
-              if (result.threshold) {
-                setThreshold(result.threshold);
-              }
-            }
-          } catch (err) {
-            console.error('Analysis request failed:', err);
+        if (response.ok) {
+          const result = await response.json();
+          const cov = Number(result?.coverage_pct);
+          if (Number.isFinite(cov)) {
+            setCoverage(cov);
+            setDuckweedCoverage(cov);
           }
-        }, 'image/jpeg', 0.8);
+          if ("valve_closed" in (result ?? {})) {
+            setStoreValveClosed(Boolean(result.valve_closed));
+            setValveClosed(Boolean(result.valve_closed));
+          }
+          if (Number.isFinite(Number(result?.threshold))) {
+            setThreshold(Number(result.threshold));
+          }
+        }
+      } catch (err) {
+        console.error('Analysis request failed:', err);
       }
 
       setError(null);
@@ -259,7 +161,7 @@ function useDuckweedAnalyzer(videoRef: React.RefObject<HTMLVideoElement>) {
       console.error('Video analysis error:', err);
       setError(err instanceof Error ? err.message : 'Analysis failed');
     }
-  }, [running, videoRef, setDuckweedCoverage, setStoreValveClosed, setThreshold]);
+  }, [running, videoRef, aiMode, setDuckweedCoverage, setStoreValveClosed, setThreshold]);
 
   const start = useCallback(() => {
     if (running) return;
@@ -390,6 +292,15 @@ export const CameraSegmentation = () => {
     }
   }, [isVideoActive, aiMode, settings.showOverlay, settings.greenThreshold]);
 
+  // Auto-start analyzer when AI mode is on and video is active
+  useEffect(() => {
+    if (aiMode === 'segmentation' && isVideoActive && !analyzerRunning) {
+      startAnalyzer();
+    } else if (aiMode === 'off' && analyzerRunning) {
+      stopAnalyzer();
+    }
+  }, [aiMode, isVideoActive, analyzerRunning, startAnalyzer, stopAnalyzer]);
+
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -397,8 +308,12 @@ export const CameraSegmentation = () => {
       });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.play();
+        await videoRef.current.play();
         setIsVideoActive(true);
+        // Auto-enable AI mode when camera starts
+        if (aiMode === 'off') {
+          updateMetric('aiMode', 'segmentation');
+        }
       }
     } catch (error) {
       console.error('Camera access denied:', error);
@@ -411,8 +326,12 @@ export const CameraSegmentation = () => {
       if (videoRef.current) {
         videoRef.current.src = '/sample-duckweed.mp4';
         videoRef.current.loop = true;
-        videoRef.current.play();
+        await videoRef.current.play();
         setIsVideoActive(true);
+        // Auto-enable AI mode when demo starts
+        if (aiMode === 'off') {
+          updateMetric('aiMode', 'segmentation');
+        }
       }
     }
   };
