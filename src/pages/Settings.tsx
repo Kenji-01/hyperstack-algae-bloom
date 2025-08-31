@@ -35,7 +35,7 @@ export default function Settings() {
     try {
       // Save all thresholds
       const promises = Object.entries(thresholds).map(([key, value]) =>
-        api.updateThreshold(key, value)
+        api.updateThreshold(key, Number(value))
       );
       
       const results = await Promise.all(promises);
