@@ -120,6 +120,7 @@ function useDuckweedAnalyzer(videoRef: React.RefObject<HTMLVideoElement>) {
 
       // Local coverage calculation
       const currentCoverage = analyzeFrame(videoRef.current, 0.3);
+      console.log('Local coverage calculated:', currentCoverage);
       setCoverage(currentCoverage);
       setDuckweedCoverage(currentCoverage);
 
@@ -131,18 +132,24 @@ function useDuckweedAnalyzer(videoRef: React.RefObject<HTMLVideoElement>) {
       const formData = new FormData();
       formData.append('image', blob, 'frame.jpg');
       
+      console.log('Sending frame to backend for analysis...');
       try {
         const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'}/analyze`, {
           method: 'POST',
           body: formData
         });
         
+        console.log('Backend response status:', response.status);
         if (response.ok) {
           const result = await response.json();
+          console.log('Backend analysis result:', result);
           const cov = Number(result?.coverage_pct);
           if (Number.isFinite(cov)) {
+            console.log('Setting coverage from backend:', cov);
             setCoverage(cov);
             setDuckweedCoverage(cov);
+          } else {
+            console.log('Backend coverage invalid, using local:', currentCoverage);
           }
           if ("valve_closed" in (result ?? {})) {
             setStoreValveClosed(Boolean(result.valve_closed));
@@ -151,9 +158,12 @@ function useDuckweedAnalyzer(videoRef: React.RefObject<HTMLVideoElement>) {
           if (Number.isFinite(Number(result?.threshold))) {
             setThreshold(Number(result.threshold));
           }
+        } else {
+          console.error('Backend response not ok:', response.status, response.statusText);
         }
       } catch (err) {
         console.error('Analysis request failed:', err);
+        console.log('Using local coverage due to backend failure:', currentCoverage);
       }
 
       setError(null);
@@ -274,6 +284,7 @@ export const CameraSegmentation = () => {
 
   // Use store values for unified display, fallback to hook values
   const unifiedCoverage = duckweedCoverage || localCoverage;
+  console.log('Current coverage values - store:', duckweedCoverage, 'local:', localCoverage, 'unified:', unifiedCoverage);
   const unifiedValveClosed = valveClosed !== null ? valveClosed : hookValveClosed;
   const unifiedPhAdjustmentActive = useDeviceStore(s => s.phAdjustmentActive) !== null ? 
     useDeviceStore(s => s.phAdjustmentActive) : hookPhAdjustmentActive;
@@ -353,7 +364,9 @@ export const CameraSegmentation = () => {
         canvasRef.current, 
         settings.greenThreshold
       );
+      console.log('processFrame coverage:', result.coverage);
       setCoverage(result.coverage);
+      updateMetric('duckweedCoverage', result.coverage);
       
       if (settings.showOverlay) {
         const ctx = canvasRef.current.getContext('2d');

@@ -122,8 +122,14 @@ export const useDeviceStore = create<DeviceState & DeviceActions>()(
       togglePump: () => set((state) => ({ pumpOn: !state.pumpOn })),
       toggleFan: () => set((state) => ({ fanOn: !state.fanOn })),
       toggleValve: () => set((state) => ({ valveOpen: !state.valveOpen })),
-      updateMetric: (key, value) => set((state) => ({ [key]: value })),
-      setDuckweedCoverage: (pct) => set({ duckweedCoverage: pct }),
+      updateMetric: (key, value) => {
+        console.log('Store updateMetric:', key, value);
+        set((state) => ({ [key]: value }));
+      },
+      setDuckweedCoverage: (pct) => {
+        console.log('Store setDuckweedCoverage:', pct);
+        set({ duckweedCoverage: pct });
+      },
       setValveClosed: (closed) => set({ valveClosed: closed }),
       setThreshold: (n) => set({ threshold: n }),
       updateSetting: (key, value) => 
