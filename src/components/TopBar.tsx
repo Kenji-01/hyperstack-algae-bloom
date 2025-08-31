@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Activity, User } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn } from '../utils';
 
 export const TopBar = () => {
   const location = useLocation();

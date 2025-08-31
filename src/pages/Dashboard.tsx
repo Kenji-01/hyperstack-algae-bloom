@@ -8,7 +8,7 @@ import { ControlsPanel } from '@/components/ControlsPanel';
 import { SystemHealth } from '@/components/SystemHealth';
 import { AlgaeAnimation } from '@/components/AlgaeAnimation';
 // (removed) import DuckweedSegClient from '@/components/DuckweedSegClient';
-import { useDeviceStore } from '@/lib/store';
+import { useDeviceStore } from '../store';
 
 export default function Dashboard() {
   const { 

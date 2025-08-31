@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Power, Lightbulb, Droplets, Fan } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useDeviceStore, DeviceState } from '@/lib/store';
+import { useDeviceStore, DeviceState } from '../store';
 import { api } from '@/services/api';
 import { useToast } from '@/hooks/use-toast';
 

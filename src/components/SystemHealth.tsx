@@ -3,7 +3,7 @@ import { AlertCircle, CheckCircle, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useDeviceStore } from '@/lib/store';
+import { useDeviceStore } from '../store';
 import { api } from '@/services/api';
 import { useToast } from '@/hooks/use-toast';
 

@@ -1,6 +1,6 @@
 import { ReactNode } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { cn } from '@/lib/utils';
+import { cn } from '../utils';
 
 interface MetricCardProps {
   title: string;
