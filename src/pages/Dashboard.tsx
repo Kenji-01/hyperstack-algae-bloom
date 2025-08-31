@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Thermometer, Droplets, Zap, Activity, Gauge, Camera, Wifi, FlaskRound } from 'lucide-react';
 import { TopBar } from '@/components/TopBar';
@@ -9,6 +9,29 @@ import { SystemHealth } from '@/components/SystemHealth';
 import { AlgaeAnimation } from '@/components/AlgaeAnimation';
 // (removed) import DuckweedSegClient from '@/components/DuckweedSegClient';
 import { useDeviceStore } from '../store';
+
+const STATUS_URL = "http://raspberrypi.local:8765/duckweed_status.json";
+
+function Toast({ show, text }) {
+  if (!show) return null;
+  return (
+    <div style={{
+      position: "fixed",
+      right: 16,
+      bottom: 16,
+      background: "rgba(0,0,0,0.9)",
+      color: "white",
+      padding: "10px 12px",
+      borderRadius: 10,
+      fontSize: 14,
+      zIndex: 9999,
+      boxShadow: "0 6px 20px rgba(0,0,0,.25)",
+      pointerEvents: "none"
+    }}>
+      {text}
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const { 
@@ -32,6 +55,41 @@ export default function Dashboard() {
 
   // Use reactive selector for live duckweed coverage updates
   const duckweedCoverage = useDeviceStore(s => s.duckweedCoverage ?? 0);
+
+  // Toast state for harvest alerts
+  const [toastVisible, setToastVisible] = useState(false);
+  const lastActionRef = useRef("");
+  const [status, setStatus] = useState(null);
+
+  // Poll status from backend
+  useEffect(() => {
+    const pollStatus = async () => {
+      try {
+        const res = await fetch(STATUS_URL, { cache: "no-store" });
+        if (res.ok) {
+          const json = await res.json();
+          setStatus(json);
+        }
+      } catch (error) {
+        // Silently handle fetch errors
+      }
+    };
+
+    pollStatus();
+    const interval = setInterval(pollStatus, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Show toast on harvest alert
+  useEffect(() => {
+    if (!status) return;
+    const action = status.action || "";
+    if (action === "harvest_alert" && lastActionRef.current !== "harvest_alert") {
+      setToastVisible(true);
+      setTimeout(() => setToastVisible(false), 10000); // hide after 10s
+    }
+    lastActionRef.current = action;
+  }, [status]);
 
   // Simulate real-time data updates
   useEffect(() => {
@@ -204,6 +262,8 @@ export default function Dashboard() {
         {/* Control Panel */}
         <ControlsPanel />
       </main>
+
+      <Toast show={toastVisible} text="Harvesting Alert — Valve cycle complete" />
     </div>
   );
 }
