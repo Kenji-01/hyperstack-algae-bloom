@@ -1,180 +1,209 @@
-import { useEffect, useRef, useState } from "react";
-
-const PI_HOST = "http://raspberrypi.local:8765"; // change if needed
-const STATUS_URL = `${PI_HOST}/duckweed_status.json`;
-
-function useStatusPoll(url: string, intervalMs = 1000) {
-  const [data, setData] = useState<any>(null);
-  const timer = useRef<NodeJS.Timeout | null>(null);
-
-  useEffect(() => {
-    const fetcher = async () => {
-      try {
-        const res = await fetch(url, { cache: "no-store" });
-        if (!res.ok) return;
-        const json = await res.json();
-        setData(json);
-      } catch {}
-    };
-    fetcher();
-    timer.current = setInterval(fetcher, intervalMs);
-    return () => {
-      if (timer.current) clearInterval(timer.current);
-    };
-  }, [url, intervalMs]);
-
-  return data;
-}
-
-function HarvestOverlay({ show }: { show: boolean }) {
-  if (!show) return null;
-  return (
-    <div style={{
-      position: "fixed", 
-      inset: 0, 
-      display: "grid", 
-      placeItems: "center",
-      zIndex: 9999, 
-      pointerEvents: "none"
-    }}>
-      <div style={{
-        background: "black", 
-        color: "white",
-        padding: "20px 36px", 
-        borderRadius: 12,
-        fontSize: 22, 
-        textAlign: "center",
-        boxShadow: "0 10px 30px rgba(0,0,0,.4)"
-      }}>
-        <div style={{ marginBottom: 8 }}>Harvesting Alert</div>
-        <div className="duckweed-animation" aria-hidden>🟢</div>
-      </div>
-      <style>{`
-        .duckweed-animation {
-          font-size: 36px;
-          display: inline-block;
-          animation: jump 0.6s ease-in-out infinite alternate;
-        }
-        @keyframes jump {
-          from { transform: translateY(0); }
-          to   { transform: translateY(-14px); }
-        }
-      `}</style>
-    </div>
-  );
-}
+import { useEffect } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Thermometer, Droplets, Zap, Activity, Gauge, Camera, Wifi, FlaskRound } from 'lucide-react';
+import { TopBar } from '@/components/TopBar';
+import { MetricCard } from '@/components/MetricCard';
+import { CameraSegmentation } from '@/components/CameraSegmentation';
+import { ControlsPanel } from '@/components/ControlsPanel';
+import { SystemHealth } from '@/components/SystemHealth';
+import { AlgaeAnimation } from '@/components/AlgaeAnimation';
+// (removed) import DuckweedSegClient from '@/components/DuckweedSegClient';
+import { useDeviceStore } from '../store';
 
 export default function Dashboard() {
-  const [threshold, setThreshold] = useState(70);
-  const status = useStatusPoll(STATUS_URL, 1000);
+  const { 
+    waterTemp, 
+    pH, 
+    EC, 
+    DO, 
+    lightOn, 
+    pumpOn, 
+    valveOpen, 
+    fanOn,
+    connectivity,
+    cameraEnabled,
+    growthRate,
+    energyUsage,
+    co2Levels,
+    systemHealth,
+    updateMetric,
+    computeSystemHealth
+  } = useDeviceStore();
 
-  // Compute coverage display
-  const coverage = status?.coverage != null
-    ? Math.round(status.coverage * 100)
-    : null;
+  // Use reactive selector for live duckweed coverage updates
+  const duckweedCoverage = useDeviceStore(s => s.duckweedCoverage ?? 0);
 
-  // Show overlay for 10s only when we see action === "harvest_alert"
-  const [showOverlay, setShowOverlay] = useState(false);
-  const lastActionRef = useRef("");
+  // Simulate real-time data updates
   useEffect(() => {
-    if (!status) return;
-    if (status.action === "harvest_alert" && lastActionRef.current !== "harvest_alert") {
-      setShowOverlay(true);
-      setTimeout(() => setShowOverlay(false), 10000); // 10 sec
-    }
-    lastActionRef.current = status.action || "";
-  }, [status]);
+    const interval = setInterval(() => {
+      // Add small random variations to simulate live data
+      updateMetric('waterTemp', Math.max(20, Math.min(30, waterTemp + (Math.random() - 0.5) * 0.2)));
+      updateMetric('pH', Math.max(6.0, Math.min(8.0, pH + (Math.random() - 0.5) * 0.05)));
+      updateMetric('EC', Math.max(700, Math.min(1000, EC + (Math.random() - 0.5) * 10)));
+      updateMetric('DO', Math.max(7.0, Math.min(10.0, DO + (Math.random() - 0.5) * 0.1)));
+      updateMetric('energyUsage', Math.max(3.0, Math.min(6.0, energyUsage + (Math.random() - 0.5) * 0.1)));
+      updateMetric('co2Levels', Math.max(1.5, Math.min(3.0, co2Levels + (Math.random() - 0.5) * 0.05)));
+      
+      // Update growth rate array
+      const newGrowthData = [...growthRate];
+      newGrowthData.push(Math.random() * 20 + 60);
+      if (newGrowthData.length > 14) newGrowthData.shift();
+      updateMetric('growthRate', newGrowthData);
+      
+      computeSystemHealth();
+    }, 5000);
 
-  // Manual buttons wired later to a REST endpoint; for now they just show toasts
-  const openValve = () => alert("Open Valve requested (wire to backend)");
-  const closeValve4Min = () => alert("Close Valve 4 min requested (wire to backend)");
+    return () => clearInterval(interval);
+  }, [waterTemp, pH, EC, DO, energyUsage, co2Levels, growthRate, updateMetric, computeSystemHealth]);
+
+  // Prepare chart data
+  const chartData = growthRate.map((value, index) => ({
+    day: index + 1,
+    growth: value
+  }));
+
+  const getConnectivityStatus = () => {
+    switch (connectivity) {
+      case 'connected': return { icon: 'text-green-400', text: 'Connected' };
+      case 'poor': return { icon: 'text-yellow-400', text: 'Poor Signal' };
+      case 'disconnected': return { icon: 'text-red-400', text: 'Disconnected' };
+    }
+  };
+
+  const connectivityStatus = getConnectivityStatus();
 
   return (
-    <div style={{ padding: 24, maxWidth: 1100, margin: "0 auto" }}>
-      <h2 style={{ marginBottom: 16, color: "hsl(var(--foreground))" }}>HyperStack AI – Duckweed Control</h2>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        {/* Camera tile (replace src with your stream later) */}
-        <div style={{ background: "hsl(var(--card))", padding: 12, borderRadius: 12, border: "1px solid hsl(var(--border))" }}>
-          <div style={{ color: "hsl(var(--muted-foreground))", marginBottom: 8 }}>Under-Duckweed Camera</div>
-          <img
-            src="https://placehold.co/640x360/1a1a1a/9aa0a6?text=Camera+Feed"
-            alt="camera"
-            style={{ width: "100%", borderRadius: 8 }}
+    <div className="min-h-screen bg-background">
+      <TopBar />
+      
+      <main className="container mx-auto px-6 py-8">
+        {/* Hero Section */}
+        <div className="grid lg:grid-cols-2 gap-8 mb-8">
+          {/* Left Column */}
+          <div className="space-y-6">
+            <SystemHealth />
+            <CameraSegmentation />
+            {/* DuckweedSegClient removed in favor of top camera */}
+          </div>
+          
+          {/* Right Column - Growth Analytics */}
+          <div className="hyperstack-card hyperstack-card-glow p-6">
+            <h2 className="text-xl font-bold mb-4">Growth Analytics</h2>
+            <div className="h-64 mb-6">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis 
+                    dataKey="day" 
+                    stroke="hsl(var(--muted-foreground))"
+                    fontSize={12}
+                  />
+                  <YAxis 
+                    stroke="hsl(var(--muted-foreground))"
+                    fontSize={12}
+                  />
+                  <Tooltip 
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--card))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: '8px'
+                    }}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="growth" 
+                    stroke="hsl(var(--primary))" 
+                    strokeWidth={2}
+                    dot={{ fill: 'hsl(var(--primary))', strokeWidth: 2, r: 4 }}
+                    activeDot={{ r: 6 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            
+            {/* Duckweed Animation */}
+            <div className="border-t border-border pt-4">
+              <h3 className="text-sm font-medium text-muted-foreground mb-3">Duckweed Status</h3>
+              <AlgaeAnimation 
+                mood={systemHealth === 'good' ? 'happy' : systemHealth === 'warning' ? 'neutral' : 'bad'} 
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Metrics Grid */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-8">
+          <MetricCard
+            title="Duckweed Coverage"
+            value={duckweedCoverage.toFixed(1)}
+            unit="%"
+            icon={<Droplets className="w-4 h-4" />}
+            status={duckweedCoverage >= 50 ? 'good' : duckweedCoverage >= 20 ? 'warning' : 'critical'}
+          />
+          
+          <MetricCard
+            title="pH Level"
+            value={pH.toFixed(1)}
+            icon={<FlaskRound className="w-4 h-4" />}
+            status={pH >= 6.5 && pH <= 7.5 ? 'good' : 'warning'}
+          />
+          
+          <MetricCard
+            title="Water Temp"
+            value={waterTemp.toFixed(1)}
+            unit="°C"
+            icon={<Thermometer className="w-4 h-4" />}
+            status={waterTemp >= 20 && waterTemp <= 26 ? 'good' : 'warning'}
+          />
+          
+          <MetricCard
+            title="EC Level"
+            value={EC}
+            unit="μS/cm"
+            icon={<Zap className="w-4 h-4" />}
+            status={Math.abs(EC - 800) <= 100 ? 'good' : 'warning'}
+          />
+          
+          <MetricCard
+            title="Dissolved O₂"
+            value={DO.toFixed(1)}
+            unit="mg/L"
+            icon={<Activity className="w-4 h-4" />}
+            status={DO >= 7.5 ? 'good' : 'warning'}
+          />
+          
+          <MetricCard
+            title="Pump Status"
+            value={pumpOn ? 'RUNNING' : 'STOPPED'}
+            icon={<Gauge className="w-4 h-4" />}
+            status={pumpOn ? 'good' : 'warning'}
+          />
+          
+          <MetricCard
+            title="Lights"
+            value={lightOn ? 'ON' : 'OFF'}
+            icon={<Zap className="w-4 h-4" />}
+            status={lightOn ? 'good' : 'warning'}
+          />
+          
+          <MetricCard
+            title="Camera"
+            value={cameraEnabled ? 'ACTIVE' : 'INACTIVE'}
+            icon={<Camera className="w-4 h-4" />}
+            status={cameraEnabled ? 'good' : 'warning'}
+          />
+          
+          <MetricCard
+            title="Connectivity"
+            value={connectivityStatus.text}
+            icon={<Wifi className={`w-4 h-4 ${connectivityStatus.icon}`} />}
+            status={connectivity === 'connected' ? 'good' : connectivity === 'poor' ? 'warning' : 'critical'}
           />
         </div>
 
-        {/* Right column */}
-        <div style={{ display: "grid", gap: 16 }}>
-          <div style={{ background: "hsl(var(--card))", padding: 16, borderRadius: 12, border: "1px solid hsl(var(--border))" }}>
-            <div style={{ color: "hsl(var(--muted-foreground))" }}>Coverage</div>
-            <div style={{ fontSize: 48, fontWeight: 700, marginTop: 6, color: "hsl(var(--foreground))" }}>
-              {coverage !== null ? `${coverage}%` : "—"}
-            </div>
-            <div style={{ color: "hsl(var(--muted-foreground))" }}>
-              Threshold: {threshold}%
-            </div>
-          </div>
-
-          <div style={{ background: "hsl(var(--card))", padding: 16, borderRadius: 12, border: "1px solid hsl(var(--border))" }}>
-            <div style={{ marginBottom: 8, color: "hsl(var(--foreground))" }}>Controls</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <input
-                type="range" 
-                min={40} 
-                max={95} 
-                value={threshold}
-                onChange={e => setThreshold(parseInt(e.target.value))}
-                style={{ flexGrow: 1 }}
-              />
-              <div style={{ color: "hsl(var(--foreground))" }}>{threshold}%</div>
-            </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button 
-                onClick={openValve}
-                style={{
-                  background: "hsl(var(--primary))",
-                  color: "hsl(var(--primary-foreground))",
-                  border: "none",
-                  padding: "8px 16px",
-                  borderRadius: 6,
-                  cursor: "pointer"
-                }}
-              >
-                Open Valve (GPIO16)
-              </button>
-              <button 
-                onClick={closeValve4Min}
-                style={{
-                  background: "hsl(var(--secondary))",
-                  color: "hsl(var(--secondary-foreground))",
-                  border: "1px solid hsl(var(--border))",
-                  padding: "8px 16px",
-                  borderRadius: 6,
-                  cursor: "pointer"
-                }}
-              >
-                Close Valve 4 min
-              </button>
-            </div>
-          </div>
-
-          <div style={{ background: "hsl(var(--card))", padding: 16, borderRadius: 12, border: "1px solid hsl(var(--border))" }}>
-            <div style={{ color: "hsl(var(--foreground))" }}>Status</div>
-            <pre style={{ 
-              whiteSpace: "pre-wrap", 
-              marginTop: 8, 
-              color: "hsl(var(--muted-foreground))",
-              fontSize: 12,
-              overflow: "auto",
-              maxHeight: 200
-            }}>
-{JSON.stringify(status, null, 2) || "Waiting for data…"}
-            </pre>
-          </div>
-        </div>
-      </div>
-
-      <HarvestOverlay show={showOverlay} />
+        {/* Control Panel */}
+        <ControlsPanel />
+      </main>
     </div>
   );
 }
