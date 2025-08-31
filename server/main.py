@@ -15,15 +15,19 @@ try:
 except Exception:
     YOLO = None
 
-# Try GPIO relay (works on Pi if installed)
+# Try GPIO (Raspberry Pi or mock)
+ON_PI = False
 try:
-    from gpiozero import OutputDevice
-    GPIO_AVAILABLE = True
+    import RPi.GPIO as GPIO
+    ON_PI = True
 except Exception:
-    GPIO_AVAILABLE = False
-    # Create a dummy class for type annotation when GPIO is not available
-    class OutputDevice:
-        pass
+    class MockGPIO:
+        BCM = OUT = HIGH = LOW = None
+        def setmode(*a, **k): print("[GPIO] setmode", a, k)
+        def setup(*a, **k): print("[GPIO] setup", a, k)
+        def output(*a, **k): print("[GPIO] output", a, k)
+        def cleanup(*a, **k): print("[GPIO] cleanup", a, k)
+    GPIO = MockGPIO()
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("duckweed")
@@ -38,63 +42,58 @@ app.add_middleware(
 )
 
 # --- Config (via ENV) ---
-RELAY_PIN = int(os.getenv("VALVE_RELAY_PIN", "17"))               # BCM numbering
-RELAY_ACTIVE_LOW = os.getenv("VALVE_ACTIVE_LOW", "1") == "1"      # most relay boards are active-low
-THRESHOLD = float(os.getenv("DUCKWEED_CLOSE_THRESHOLD", "50"))    # % coverage to close valve
+INLET_VALVE_PIN = int(os.getenv("INLET_VALVE_PIN", "17"))         # BCM numbering for inlet valve
+ACTIVE_LOW = bool(int(os.getenv("INLET_ACTIVE_LOW", "1")))        # 1=active low relays
+DUCKWEED_CLOSE_THRESHOLD = int(os.getenv("DUCKWEED_CLOSE_THRESHOLD", "40"))  # % coverage to close valve
 PH_RELAY_PIN = int(os.getenv("PH_RELAY_PIN", "18"))              # BCM numbering for pH control
 PH_THRESHOLD_LOW = float(os.getenv("PH_THRESHOLD_LOW", "30"))     # % coverage to activate pH adjustment
 PH_THRESHOLD_HIGH = float(os.getenv("PH_THRESHOLD_HIGH", "70"))   # % coverage to deactivate pH adjustment
 WEIGHTS = Path(__file__).parent / "weights" / "duckweed-seg.pt"   # YOLO weights (optional)
 
-# --- GPIO devices ---
-_valve: Optional[OutputDevice] = None
-_ph_relay: Optional[OutputDevice] = None
+# --- GPIO setup ---
+VALVE_CLOSED: Optional[bool] = None
+_ph_relay: Optional[bool] = None
 
-if GPIO_AVAILABLE:
-    try:
-        # active_high=False means .on() energizes the relay for active-low modules
-        _valve = OutputDevice(RELAY_PIN, active_high=not RELAY_ACTIVE_LOW, initial_value=False)
-        log.info(f"Valve relay ready on BCM{RELAY_PIN} (active_low={RELAY_ACTIVE_LOW})")
-        
-        # Initialize pH control relay
-        _ph_relay = OutputDevice(PH_RELAY_PIN, active_high=not RELAY_ACTIVE_LOW, initial_value=False)
-        log.info(f"pH relay ready on BCM{PH_RELAY_PIN} (active_low={RELAY_ACTIVE_LOW})")
-    except Exception as e:
-        log.warning(f"GPIO init failed: {e}")
-        _valve = None
-        _ph_relay = None
+if ON_PI:
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(INLET_VALVE_PIN, GPIO.OUT)
+    GPIO.setup(PH_RELAY_PIN, GPIO.OUT)
+    log.info(f"GPIO initialized on Pi: inlet={INLET_VALVE_PIN}, pH={PH_RELAY_PIN}")
 else:
-    log.warning("GPIO not available (running off Pi or library not installed).")
+    log.warning("Running in mock GPIO mode (not on Pi)")
 
-def set_valve_closed(closed: bool) -> bool:
-    """True=close valve (energize relay); False=open valve."""
-    if _valve is None:
-        return False
-    if closed:
-        _valve.on()
+def set_valve_closed(is_closed: bool) -> bool:
+    """True=close inlet valve; False=open inlet valve."""
+    global VALVE_CLOSED
+    
+    # active-low relay: LOW = energized/closed
+    if ACTIVE_LOW:
+        GPIO.output(INLET_VALVE_PIN, GPIO.LOW if is_closed else GPIO.HIGH)
     else:
-        _valve.off()
+        GPIO.output(INLET_VALVE_PIN, GPIO.HIGH if is_closed else GPIO.LOW)
+    
+    VALVE_CLOSED = is_closed
+    log.info(f"Inlet valve -> {'CLOSED' if is_closed else 'OPEN'}")
     return True
 
 def get_valve_closed() -> Optional[bool]:
-    if _valve is None:
-        return None
-    return bool(_valve.value)
+    return VALVE_CLOSED
 
 def set_ph_adjustment_active(active: bool) -> bool:
-    """True=activate pH adjustment (energize relay); False=deactivate pH adjustment."""
-    if _ph_relay is None:
-        return False
-    if active:
-        _ph_relay.on()
+    """True=activate pH adjustment; False=deactivate pH adjustment."""
+    global _ph_relay
+    
+    if ACTIVE_LOW:
+        GPIO.output(PH_RELAY_PIN, GPIO.LOW if active else GPIO.HIGH)
     else:
-        _ph_relay.off()
+        GPIO.output(PH_RELAY_PIN, GPIO.HIGH if active else GPIO.LOW)
+    
+    _ph_relay = active
+    log.info(f"pH adjustment -> {'ACTIVE' if active else 'INACTIVE'}")
     return True
 
 def get_ph_adjustment_active() -> Optional[bool]:
-    if _ph_relay is None:
-        return None
-    return bool(_ph_relay.value)
+    return _ph_relay
 
 def determine_ph_control(coverage_pct: float, ph_sensor_value: float = None) -> bool:
     """
@@ -166,12 +165,12 @@ def status():
     return {
         "ok": True,
         "mode": mode,
-        "threshold": THRESHOLD,
+        "threshold": DUCKWEED_CLOSE_THRESHOLD,
         "ph_threshold_low": PH_THRESHOLD_LOW,
         "ph_threshold_high": PH_THRESHOLD_HIGH,
         "weights_present": WEIGHTS.exists(),
         "weights_path": WEIGHTS.as_posix(),
-        "gpio_available": GPIO_AVAILABLE,
+        "gpio_available": ON_PI,
         "valve_closed": get_valve_closed(),
         "ph_adjustment_active": get_ph_adjustment_active(),
     }
@@ -186,24 +185,22 @@ async def analyze(image: UploadFile = File(...)):
     model = ensure_model()
     if model is None:
         pct = hsv_coverage(img)
-        should_close = pct >= THRESHOLD
-        valve_applied = set_valve_closed(should_close)
+        coverage_pct = round(pct, 2)
+        set_valve_closed(coverage_pct >= DUCKWEED_CLOSE_THRESHOLD)
         
         # pH control based on duckweed coverage and pH sensor (if available)
         ph_sensor_reading = read_ph_sensor()
         should_ph_active = determine_ph_control(pct, ph_sensor_reading)
-        ph_applied = set_ph_adjustment_active(should_ph_active)
+        set_ph_adjustment_active(should_ph_active)
         
-        log.info(f"HSV Analysis: {pct:.1f}% coverage, valve={'closed' if should_close else 'open'}, pH={'active' if should_ph_active else 'inactive'}")
+        log.info(f"HSV Analysis: {coverage_pct}% coverage, valve={'closed' if get_valve_closed() else 'open'}")
         
         return {
-            "coverage_pct": float(round(pct, 2)),
-            "mode": "hsv",
-            "threshold": THRESHOLD,
-            "valve_closed": should_close,
-            "gpio_applied": valve_applied,
-            "ph_adjustment_active": should_ph_active,
-            "ph_gpio_applied": ph_applied,
+            "coverage_pct": coverage_pct,
+            "mode": "camera",
+            "threshold": DUCKWEED_CLOSE_THRESHOLD,
+            "valve_closed": bool(get_valve_closed()),
+            "ph_adjustment_active": get_ph_adjustment_active(),
             "ph_threshold_low": PH_THRESHOLD_LOW,
             "ph_threshold_high": PH_THRESHOLD_HIGH
         }
@@ -218,37 +215,44 @@ async def analyze(image: UploadFile = File(...)):
             m = cv2.resize(m, (W, H), interpolation=cv2.INTER_NEAREST)
             mask_total |= (m > 0.5).astype(np.uint8)
     pct = 100.0 * (mask_total.sum() / float(H * W))
-    should_close = pct >= THRESHOLD
-    valve_applied = set_valve_closed(should_close)
+    coverage_pct = round(pct, 2)
+    set_valve_closed(coverage_pct >= DUCKWEED_CLOSE_THRESHOLD)
     
     # pH control based on duckweed coverage and pH sensor (if available)
     ph_sensor_reading = read_ph_sensor()
     should_ph_active = determine_ph_control(pct, ph_sensor_reading)
-    ph_applied = set_ph_adjustment_active(should_ph_active)
+    set_ph_adjustment_active(should_ph_active)
     
-    log.info(f"YOLO Analysis: {pct:.1f}% coverage, valve={'closed' if should_close else 'open'}, pH={'active' if should_ph_active else 'inactive'}")
+    log.info(f"YOLO Analysis: {coverage_pct}% coverage, valve={'closed' if get_valve_closed() else 'open'}")
     
     return {
-        "coverage_pct": float(round(pct, 2)),
-        "mode": "yolo",
-        "threshold": THRESHOLD,
-        "valve_closed": should_close,
-        "gpio_applied": valve_applied,
-        "ph_adjustment_active": should_ph_active,
-        "ph_gpio_applied": ph_applied,
+        "coverage_pct": coverage_pct,
+        "mode": "camera",
+        "threshold": DUCKWEED_CLOSE_THRESHOLD,
+        "valve_closed": bool(get_valve_closed()),
+        "ph_adjustment_active": get_ph_adjustment_active(),
         "ph_threshold_low": PH_THRESHOLD_LOW,
         "ph_threshold_high": PH_THRESHOLD_HIGH
     }
 
 @app.post("/valve/close")
 def valve_close():
-    ok = set_valve_closed(True)
-    return {"valve_closed": True, "gpio_applied": ok}
+    set_valve_closed(True)
+    return {"valve_closed": True}
 
 @app.post("/valve/open")
 def valve_open():
-    ok = set_valve_closed(False)
-    return {"valve_closed": False, "gpio_applied": ok}
+    set_valve_closed(False)
+    return {"valve_closed": False}
+
+@app.post("/threshold")
+def set_threshold(data: dict):
+    global DUCKWEED_CLOSE_THRESHOLD
+    threshold = data.get("threshold")
+    if threshold is not None and 0 <= threshold <= 100:
+        DUCKWEED_CLOSE_THRESHOLD = int(threshold)
+        log.info(f"Threshold updated to {DUCKWEED_CLOSE_THRESHOLD}%")
+    return {"threshold": DUCKWEED_CLOSE_THRESHOLD}
 
 @app.post("/ph/activate")
 def ph_activate():

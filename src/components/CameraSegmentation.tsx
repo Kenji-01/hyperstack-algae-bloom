@@ -122,19 +122,34 @@ export const CameraSegmentation = () => {
     }
   };
 
+  const sendThreshold = async (n: number) => {
+    try {
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'}/threshold`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threshold: n })
+      });
+      if (response.ok) {
+        updateMetric('threshold', n);
+      }
+    } catch (error) {
+      console.error('Failed to update threshold:', error);
+    }
+  };
+
   const handleCapture = () => {
     if (!canvasRef.current) return;
 
     const imageData = captureFrame(canvasRef.current);
     addCapturedFrame({
       timestamp: new Date(),
-      coverage,
+      coverage: unifiedCoverage,
       imageData
     });
 
     toast({
       title: 'Frame Captured',
-      description: `Saved with ${coverage.toFixed(1)}% coverage`,
+      description: `Saved with ${unifiedCoverage.toFixed(1)}% coverage`,
     });
   };
 
@@ -183,42 +198,60 @@ export const CameraSegmentation = () => {
           )}
         </div>
 
-        {/* Unified Analysis Status */}
+        {/* Camera Analysis Display */}
         <div className="mt-3 text-sm space-y-2">
           <div className="flex items-center justify-between p-3 bg-secondary rounded-lg">
-            <span className="font-medium">Duckweed Coverage ({mode.toUpperCase()})</span>
+            <span className="font-medium">Duckweed Coverage</span>
             <span className="text-lg font-bold text-primary">{unifiedCoverage.toFixed(1)}%</span>
           </div>
-          <div className="text-xs text-muted-foreground">
-            Threshold: {threshold}% (server ENV)
-          </div>
-          <div className="text-xs">
-            Valve: <span className={unifiedValveClosed === null ? 'text-gray-500' : unifiedValveClosed ? 'text-red-500' : 'text-green-500'}>
+          
+          {/* Control Strip */}
+          <div className="flex items-center gap-3 p-3 bg-secondary/50 rounded-lg text-xs">
+            <div>Valve: <span className={unifiedValveClosed === null ? 'text-gray-500' : unifiedValveClosed ? 'text-red-500 font-bold' : 'text-green-500 font-bold'}>
               {unifiedValveClosed === null ? 'N/A' : unifiedValveClosed ? 'CLOSED' : 'OPEN'}
-            </span>
+            </span></div>
+            
+            <label className="flex items-center gap-1">
+              Threshold (%): 
+              <input 
+                type="number" 
+                min={0} 
+                max={100} 
+                value={threshold}
+                onChange={(e) => sendThreshold(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
+                className="w-16 px-1 py-0.5 text-xs border rounded"
+              />
+            </label>
+            
+            <Button 
+              onClick={openValve} 
+              size="sm" 
+              variant="outline"
+              className="text-green-700 border-green-300 hover:bg-green-50 h-6 px-2 text-xs"
+              disabled={unifiedValveClosed === false}
+            >
+              Open
+            </Button>
+            
+            <Button 
+              onClick={closeValve} 
+              size="sm" 
+              variant="outline"
+              className="text-red-700 border-red-300 hover:bg-red-50 h-6 px-2 text-xs"
+              disabled={unifiedValveClosed === true}
+            >
+              Close
+            </Button>
           </div>
-          <div className="text-xs">
-            pH Control: <span className={unifiedPhAdjustmentActive === null ? 'text-gray-500' : unifiedPhAdjustmentActive ? 'text-blue-500' : 'text-gray-400'}>
-              {unifiedPhAdjustmentActive === null ? 'N/A' : unifiedPhAdjustmentActive ? 'ACTIVE' : 'INACTIVE'}
-            </span>
-          </div>
-          <div className="text-xs text-muted-foreground">
-            pH Thresholds: {phThresholdLow}% - {phThresholdHigh}%
-          </div>
+          
           {analyzerError && <div className="text-red-500 text-xs">{analyzerError}</div>}
-          {/* Unified AI coverage indicator */}
-          <div className="text-xs mt-1 opacity-80 border-t pt-2">
-            <div><b>AI Coverage (Unified):</b> {unifiedCoverage.toFixed(1)}%</div>
-            <div><b>Valve Status:</b> {unifiedValveClosed === null ? "N/A" : unifiedValveClosed ? "Closed" : "Open"}</div>
-            <div><b>pH Control:</b> {unifiedPhAdjustmentActive === null ? "N/A" : unifiedPhAdjustmentActive ? "Active" : "Inactive"}</div>
-          </div>
         </div>
 
-        {/* Control Buttons */}
+        {/* Analysis Control */}
         <div className="flex gap-2 mt-4">
           {!analyzerRunning ? (
             <Button onClick={startAnalyzer} size="sm" className="flex-1">
-              Start Analysis
+              Start Camera Analysis
             </Button>
           ) : (
             <Button onClick={stopAnalyzer} size="sm" variant="secondary" className="flex-1">
@@ -233,69 +266,6 @@ export const CameraSegmentation = () => {
             variant="outline"
           >
             <Camera className="w-4 h-4" />
-          </Button>
-        </div>
-
-        {/* Valve Controls */}
-        <div className="flex gap-2 mt-2">
-          <Button 
-            onClick={openValve} 
-            size="sm" 
-            variant="outline"
-            className="flex-1 text-green-700 border-green-300 hover:bg-green-50"
-            disabled={unifiedValveClosed === false}
-          >
-            Open Valve
-          </Button>
-          <Button 
-            onClick={closeValve} 
-            size="sm" 
-            variant="outline"
-            className="flex-1 text-red-700 border-red-300 hover:bg-red-50"
-            disabled={unifiedValveClosed === true}
-          >
-            Close Valve
-          </Button>
-        </div>
-
-        {/* pH Control Buttons */}
-        <div className="flex gap-2 mt-2">
-          <Button 
-            onClick={activatePhAdjustment} 
-            size="sm" 
-            variant="outline"
-            className="flex-1 text-blue-700 border-blue-300 hover:bg-blue-50"
-            disabled={unifiedPhAdjustmentActive === true}
-          >
-            Activate pH Control
-          </Button>
-          <Button 
-            onClick={deactivatePhAdjustment} 
-            size="sm" 
-            variant="outline"
-            className="flex-1 text-gray-700 border-gray-300 hover:bg-gray-50"
-            disabled={unifiedPhAdjustmentActive === false}
-          >
-            Deactivate pH Control
-          </Button>
-        </div>
-
-        {/* Legacy AI Mode Controls */}
-        {aiMode === 'segmentation' && (
-          <div className="flex items-center justify-between p-3 bg-secondary rounded-lg mt-4">
-            <span className="text-sm font-medium">Local Coverage (Legacy)</span>
-            <span className="text-lg font-bold text-primary">{coverage.toFixed(1)}%</span>
-          </div>
-        )}
-
-        <div className="flex gap-2 mt-2">
-          <Button 
-            onClick={toggleAiMode} 
-            variant={aiMode === 'off' ? 'default' : 'secondary'}
-            size="sm"
-            className="flex-1"
-          >
-            {aiMode === 'off' ? 'Enable Local AI' : 'Disable Local AI'}
           </Button>
         </div>
       </CardContent>
